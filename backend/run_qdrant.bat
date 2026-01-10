@@ -1,0 +1,2 @@
+@echo off
+docker run -d -p 6333:6333 -v qdrant_data:/qdrant/storage qdrant/qdrant

@@ -1,0 +1,12 @@
+langchain==1.2.0
+langchain_qdrant==1.1.0
+langchain_ollama==1.0.1
+qdrant-client==1.16.2
+python-dotenv==1.2.1
+langchain-community==0.4.1
+pymupdf4llm==0.2.8
+pymupdf-layout==1.26.6
+pypdf2==3.0.1
+pydub==0.25.1
+soundfile==0.13.1
+fastapi==0.128.0
