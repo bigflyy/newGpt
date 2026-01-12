@@ -3,6 +3,7 @@ import time
 import asyncio
 from typing import List
 import subprocess # run services bat. нужно будет убрать и все в докер засунуть
+import traceback
 
 # langchain and rag stuff
 import re
@@ -101,9 +102,10 @@ class NewSGPT:
         self.__run_services()
 
         self.embeddings = OllamaEmbeddings(
-            model="qwen3-embedding:8b",
+            #model="qwen3-embedding:8b", num_ctx=4096
+            model="qwen3-embedding:0.6b", num_ctx=2048,
             base_url=self.ollama_base,
-            num_ctx=4096
+            keep_alive=90
         )
         self.qdrant_client = QdrantClient(
             host=self.qdrant_host,
@@ -118,14 +120,13 @@ class NewSGPT:
         self.vector_store = None
         # LLM
         self.model_llm = ChatOllama(
-            # model="deepseek-r1:8b",   
-            model="gpt-oss:20b",
-            base_url=OLLAMA_BASE,
-            reasoning='low',
+            model="deepseek-r1:8b",  
+            # model="gpt-oss:20b", num_ctx=65536, reasoning='low',
+            base_url=self.ollama_base,
             stream=True,
             callbacks=[TimeLogger()],
-            keep_alive=-1,
-            num_ctx=65536, # токенов
+            keep_alive=90,
+            # токенов
             
         )
         self.retriever = None
@@ -134,7 +135,7 @@ class NewSGPT:
                 Answer the question using ONLY the provided context.
                 If relevant informating is not provided - say so.
                 Answer without paraphrasing but in a readable format.
-                Write source.
+                List the sources of all chunks YOU USED in your answer.
                 Answer in Russian only. 
 
                 Context:
@@ -148,40 +149,124 @@ class NewSGPT:
         self.rag_chain = None
 
         self.context_chain = None
-    def _extract_chunks_from_md(self, file_path) -> List[Document]:
+    def assign_header_metadata(self, chunks):
         """
-        Docstring for _extract_chunks_from_md
-        
-        :param file_path: path to md file
-        
-        returns Documents of chunks
+        Присваиваем метаданные к чанкам (Лекция, глава, подглава)
         """
+        current_h1 = None
+        current_h2 = None
+        current_h3 = None
+        result = []
+        
+        for i, chunk in enumerate(chunks):
+            lines = chunk.split('\n')
+            
+            # Initialize LISTS to store ALL headers in this chunk
+            chunk_h1s = []
+            chunk_h2s = []
+            chunk_h3s = []
+            
+            for line in lines:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                    
+                if stripped.startswith('#'):
+                    hash_count = 0
+                    while hash_count < len(stripped) and stripped[hash_count] == '#':
+                        hash_count += 1
+                    
+                    if hash_count < len(stripped) and stripped[hash_count] == ' ':
+                        header_text = stripped[hash_count+1:].strip()
+                        
+                        if hash_count == 1:
+                            current_h1 = header_text
+                            current_h2 = None
+                            current_h3 = None
+                            chunk_h1s.append(header_text)  # ADD to list
+                        elif hash_count == 2:
+                            current_h2 = header_text
+                            current_h3 = None
+                            chunk_h2s.append(header_text)  # ADD to list
+                        elif hash_count == 3:
+                            current_h3 = header_text
+                            chunk_h3s.append(header_text)  # ADD to list
+            
+            # CRITICAL CHANGE: Store LISTS in metadata instead of single values
+            metadata = {
+                'id': i,
+                'header1_list': chunk_h1s or [current_h1] if current_h1 else [],
+                'header2_list': chunk_h2s or [current_h2] if current_h2 else [],
+                'header3_list': chunk_h3s or [current_h3] if current_h3 else [],
+            }
+            
+            result.append({
+                'text': chunk,
+                'metadata': metadata
+            })
+        
+        return result
+    def _extract_chunks_from_md(self, file_path):
+        """
+        Extract chunks from a single Markdown file with multi-header support.
+        Prepends structured source metadata to each chunk's text.
+        
+        Returns list of LangChain Documents with:
+        - page_content: Source block + original text
+        - metadata: Lists of all headers in chunk + filename
+        """
+        filename = os.path.basename(file_path)
+        
         with open(file_path, 'r', encoding='utf-8') as f:
             content = f.read()
 
-        # Split the content by the delimiter
-        # Using regex to handle possible whitespace around the delimiter
+        # Split by chunk delimiter (robust against whitespace variations)
         parts = re.split(r'^--\s*Чанк\s*--$', content, flags=re.MULTILINE)
+        raw_chunks = [part.strip() for part in parts[1:] if part.strip()]
 
-        # The first part is content before the first "-- Чанк --" (if any)
-        # We skip it if it's just leading noise
-        chunks = [part.strip() for part in parts[1:] if part.strip()]
+        # Get chunks with header lists in metadata
+        enriched_chunks = self.assign_header_metadata(raw_chunks)
 
         documents = []
-
-        for idx, chunk in enumerate(chunks, 1):
-            # Create document with comprehensive metadata
-            doc = Document(
-                page_content=chunk,
-                metadata={
-                    "source": file_path,
-                    "chunk_index": idx,
-                    "total_chunks": len(chunks),
-                    "file_type": "markdown",
-                    "chunk_delimiter": "-- Чанк --",
-                }
+        for item in enriched_chunks:
+            metadata = item['metadata']
+            chunk_text = item['text']
+            
+            # Get ALL headers from metadata lists (handle empty cases)
+            lectures = metadata.get('header1_list', [])
+            chapters = metadata.get('header2_list', [])
+            subchapters = metadata.get('header3_list', [])
+            
+            # Format for source block (comma-separated or fallback)
+            chunk_id = metadata.get('id')
+            lecture_str = ", ".join(lectures) if lectures else "Не указана"
+            chapter_str = ", ".join(chapters) if chapters else "Не указана"
+            subchapter_str = ", ".join(subchapters) if subchapters else "Не указана"
+            
+            # Build Russian source block
+            source_block = (
+                "Источник\n"
+                f"Номер чанка: {chunk_id}\n"
+                f"Документ: {filename}\n"
+                f"Лекция: {lecture_str}\n"
+                f"Глава: {chapter_str}\n"
+                f"Подглава: {subchapter_str}"
             )
-            documents.append(doc)
+            
+            # Combine source block with original content
+            full_text = f"{source_block}\n\n{chunk_text}"
+            
+            # Preserve header lists in metadata for filtering
+            doc_metadata = {
+                'filename': filename,
+                'header1_list': lectures,  # List of all H1s in chunk
+                'header2_list': chapters,  # List of all H2s in chunk
+                'header3_list': subchapters,  # List of all H3s in chunk
+            }
+            documents.append(Document(
+                page_content=full_text,
+                metadata=doc_metadata
+            ))
         return documents
     def _pdfs_to_txts(self, pdfs_folder, txts_folder):
         # Create output directory if needed
@@ -227,18 +312,71 @@ class NewSGPT:
             else:
                 raise Exception("Qdrant failed to start")
         
-        if not self.is_whisper_running():
-            self.whisper_process = subprocess.Popen(['run_whisper.bat'], shell=True)
-            print("Waiting for whisper-server...")
-            for i in range(max_retries):
-                if self.is_whisper_running():  # ✅ Use your helper method
-                    print("whisper-server ready")
-                    break
-                time.sleep(1)
-            else:
-                raise Exception("Whisper failed to start")
+        # if not self.is_whisper_running():
+        #     self.whisper_process = subprocess.Popen(['run_whisper.bat'], shell=True)
+        #     print("Waiting for whisper-server...")
+        #     for i in range(max_retries):
+        #         if self.is_whisper_running():  # ✅ Use your helper method
+        #             print("whisper-server ready")
+        #             break
+        #         time.sleep(1)
+        #     else:
+        #         raise Exception("Whisper failed to start")
         
         print("Both services are ready!")
+        def clear(self):
+            """
+            Clean up all resources and reset the object to initial state.
+            This includes:
+            1. Stopping background services (Qdrant, Whisper)
+            """
+            print("Clearing all resources...")
+            try:
+                # 1. Stop Whisper service if running
+                if hasattr(self, 'whisper_process') and self.whisper_process:
+                    print("Stopping Whisper service...")
+                    if self.whisper_process.poll() is None:  # Process is still running
+                        self.whisper_process.terminate()
+                        try:
+                            self.whisper_process.wait(timeout=10)
+                        except subprocess.TimeoutExpired:
+                            self.whisper_process.kill()
+                            print("⚠️  Whisper process had to be force-killed")
+                    self.whisper_process = None
+                    print("✅ Whisper service stopped")
+            
+                # 2. Stop Qdrant service if running  
+                if hasattr(self, 'qdrant_process') and self.qdrant_process:
+                    print("Stopping Qdrant service...")
+                    if self.qdrant_process.poll() is None:  # Process is still running
+                        self.qdrant_process.terminate()
+                        try:
+                            self.qdrant_process.wait(timeout=15)
+                        except subprocess.TimeoutExpired:
+                            self.qdrant_process.kill()
+                            print("Qdrant process had to be force-killed")
+                    self.qdrant_process = None
+                    print("Qdrant service stopped")
+            
+                # 3. Close Qdrant client connection
+                if hasattr(self, 'qdrant_client') and self.qdrant_client:
+                    try:
+                        print("Closing Qdrant client connection...")
+                        # Qdrant client doesn't have explicit close method, but we can delete it
+                        del self.qdrant_client
+                        self.qdrant_client = None
+                        print("Qdrant connection closed")
+                    except Exception as e:
+                        print(f"Error closing Qdrant connection: {e}")
+                print("Clear operation completed!")
+                
+            except Exception as e:
+                print(f"❌ Error during clear operation: {e}")
+                traceback.print_exc()
+                return False
+            
+            return True
+        
         ######################################################################
     def _init_chain(self):
         """
@@ -263,6 +401,7 @@ class NewSGPT:
             | StrOutputParser()
         )
     #################################
+
     
     def create_collection_from_mds(self, md_dir):
         """
@@ -299,13 +438,10 @@ class NewSGPT:
         )
         self._init_chain()
         return self.vector_store
-    async def answer(self, query : str):
-        async for token in self.rag_chain.astream(query):
-            yield token
     async def ask_with_context(self, query: str):
         """
         Единая точка входа: СНАЧАЛА возвращает контекст, ПОТОМ стримит ответ
-        
+
         Возвращает генератор, который:
         1. Сначала выдает контекстные документы
         2. Затем стримит токены ответа по одному
@@ -346,13 +482,12 @@ class NewSGPT:
             "context": context_docs,  # Оригинальные документы
             "complete": True
         }
+    
     def transcribe_audio(self, file_path):
         """
         Convert audio to WAV format and send to whisper.cpp server
         """
-        from pydub import AudioSegment
-        import io
-        import requests
+
         
         # Convert to WAV format (required by whisper.cpp)
         audio = AudioSegment.from_file(file_path)
@@ -379,13 +514,11 @@ class NewSGPT:
             return response.json()['text']
         else:
             raise Exception(f"Transcription failed: {response.text}")
-    def clear():
-        #TODO: close whisper, qdrant, offload models from vram
-        pass
+    
+
 async def main():
     gpt = NewSGPT()
     gpt.create_collection_from_mds("final_md")
-    
     while True:
         query = input("\nAsk a question (or 'quit' to exit): ").strip()
         if not query or query.lower() == "quit":
@@ -407,15 +540,12 @@ async def main():
                 print("\n" + "-"*80)
                 print(f"📚 Retrieved {len(context_docs)} context chunks:")  # ← Теперь len() работает!
                 for i, doc in enumerate(context_docs, 1):
-                    source = os.path.basename(doc.metadata.get('source', 'unknown'))
-                    preview = doc.page_content + "..." if len(doc.page_content) > 150 else doc.page_content
+                    preview = doc.page_content
                     print(f"\n📄 Chunk {i}/{len(context_docs)}")
-                    print(f"📁 Source: {source}")
-                    print(f"📝 Preview: {preview}")
+                    print(f"📝 Content: {preview}")
                 print("\n" + "-"*80)
                 print("💡 Generating answer using this context...")
                 print("-"*80)
-                
             elif result["type"] == "token":
                 if not context_shown:
                     # На случай, если контекст не был показан (защита)
@@ -425,7 +555,6 @@ async def main():
                     print("-"*80)
                 print(result["content"], end="", flush=True)
                 full_answer += result["content"]
-                
             elif result["type"] == "complete":
                 print()  # Новая строка после стриминга
                 print("\n" + "="*80)

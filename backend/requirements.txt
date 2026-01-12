@@ -10,3 +10,4 @@ pypdf2==3.0.1
 pydub==0.25.1
 soundfile==0.13.1
 fastapi==0.128.0
+python-multipart==0.0.21
