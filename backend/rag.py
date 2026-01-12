@@ -35,12 +35,14 @@ import io
 OLLAMA_BASE = "http://localhost:11434"
 QDRANT_HOST = "localhost"
 QDRANT_PORT = 6333
-COLLECTION_NAME = "my_docs"
+COLLECTION_NAME = "newsgpt"
 
 
+# TODO: CURRENT
 # api 
+# Preserve database 
 # whisper (via mic at least ) and with text extension   
-# tools calling 
+# Читать
 
 
 # Н
@@ -50,14 +52,16 @@ COLLECTION_NAME = "my_docs"
 # банк достовернных вопросов ответов 
 # что-то из пособия  
 
-# TODO:
+# TODO: (FUTURE) 
 # - time logger for embedding and retriever 
 # - whisper end point 
 # - tool call rag 
 # - multimodal model (images)
 # - chunker with llm 
 # - graph 
+# - tools calling (to vdb)
 
+# (DONE)
 # - metadata about the headers in each chunk, so it includes sources
 # - number chunks based on most similiar 
 # - raw chunk
@@ -68,8 +72,8 @@ COLLECTION_NAME = "my_docs"
 # run whisper_server
 # запускать из бэкэнда 
 
-#pkill whisper-server
-#docker stop $(docker ps -q --filter ancestor=qdrant/qdrant)
+# pkill whisper-server
+# docker stop $(docker ps -q --filter ancestor=qdrant/qdrant)
 
 class TimeLogger(BaseCallbackHandler):
     """
@@ -108,8 +112,8 @@ class TimeLogger(BaseCallbackHandler):
 
 
 class NewSGPT:
-    def __init__(self):
-        self.collection_name = "newsgpt"
+    def __init__(self, collection_name = COLLECTION_NAME):
+        self.collection_name = collection_name
         self.qdrant_host = "localhost"
         self.qdrant_port = 6333
         self.qdrant_base = f"http://{self.qdrant_host}:{self.qdrant_port}"
@@ -120,8 +124,8 @@ class NewSGPT:
         self.__run_services()
 
         self.embeddings = OllamaEmbeddings(
-            model="qwen3-embedding:8b", num_ctx=4096,
-            # model="qwen3-embedding:0.6b", num_ctx=2048,
+            # model="qwen3-embedding:8b", num_ctx=4096,
+            model="qwen3-embedding:0.6b", num_ctx=2048,
             base_url=self.ollama_base,
             keep_alive=-1,
         )
@@ -138,8 +142,8 @@ class NewSGPT:
         self.vector_store = None
         # LLM
         self.model_llm = ChatOllama(
-            # model="deepseek-r1:8b",  
-            model="gpt-oss:20b", num_ctx=65536, reasoning='low',
+            model="qwen3:8b",  
+            # model="gpt-oss:20b", num_ctx=65536, reasoning='low',
             base_url=self.ollama_base,
             stream=True,
             callbacks=[TimeLogger()],
@@ -153,7 +157,7 @@ class NewSGPT:
                 Answer the question using ONLY the provided context.
                 If relevant informating is not provided - say so.
                 Answer without paraphrasing but in a readable format.
-                List the sources of all chunks YOU USED in your answer. Example: "Источники: Документ(ы): .... \n Лекция(и): .... \n Глава(ы: .... \n Подглава(ы): .... \n"
+                List the sources of all chunks YOU USED in your answer. Example: "Источники: \n Документ(ы): .... \n Лекция(и): .... \n Глава(ы: .... \n Подглава(ы): .... \n"
                 Answer in Russian only. 
 
                 Context:
@@ -342,58 +346,58 @@ class NewSGPT:
         #         raise Exception("Whisper failed to start")
         
         print("Both services are ready!")
-        def clear(self):
-            """
-            Clean up all resources and reset the object to initial state.
-            This includes:
-            1. Stopping background services (Qdrant, Whisper)
-            """
-            print("Clearing all resources...")
-            try:
-                # 1. Stop Whisper service if running
-                if hasattr(self, 'whisper_process') and self.whisper_process:
-                    print("Stopping Whisper service...")
-                    if self.whisper_process.poll() is None:  # Process is still running
-                        self.whisper_process.terminate()
-                        try:
-                            self.whisper_process.wait(timeout=10)
-                        except subprocess.TimeoutExpired:
-                            self.whisper_process.kill()
-                            print("⚠️  Whisper process had to be force-killed")
-                    self.whisper_process = None
-                    print("✅ Whisper service stopped")
-            
-                # 2. Stop Qdrant service if running  
-                if hasattr(self, 'qdrant_process') and self.qdrant_process:
-                    print("Stopping Qdrant service...")
-                    if self.qdrant_process.poll() is None:  # Process is still running
-                        self.qdrant_process.terminate()
-                        try:
-                            self.qdrant_process.wait(timeout=15)
-                        except subprocess.TimeoutExpired:
-                            self.qdrant_process.kill()
-                            print("Qdrant process had to be force-killed")
-                    self.qdrant_process = None
-                    print("Qdrant service stopped")
-            
-                # 3. Close Qdrant client connection
-                if hasattr(self, 'qdrant_client') and self.qdrant_client:
+    def clear(self):
+        """
+        Clean up all resources and reset the object to initial state.
+        This includes:
+        1. Stopping background services (Qdrant, Whisper)
+        """
+        print("Clearing all resources...")
+        try:
+            # 1. Stop Whisper service if running
+            if hasattr(self, 'whisper_process') and self.whisper_process:
+                print("Stopping Whisper service...")
+                if self.whisper_process.poll() is None:  # Process is still running
+                    self.whisper_process.terminate()
                     try:
-                        print("Closing Qdrant client connection...")
-                        # Qdrant client doesn't have explicit close method, but we can delete it
-                        del self.qdrant_client
-                        self.qdrant_client = None
-                        print("Qdrant connection closed")
-                    except Exception as e:
-                        print(f"Error closing Qdrant connection: {e}")
-                print("Clear operation completed!")
-                
-            except Exception as e:
-                print(f"❌ Error during clear operation: {e}")
-                traceback.print_exc()
-                return False
+                        self.whisper_process.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        self.whisper_process.kill()
+                        print("⚠️  Whisper process had to be force-killed")
+                self.whisper_process = None
+                print("✅ Whisper service stopped")
+        
+            # 2. Stop Qdrant service if running  
+            if hasattr(self, 'qdrant_process') and self.qdrant_process:
+                print("Stopping Qdrant service...")
+                if self.qdrant_process.poll() is None:  # Process is still running
+                    self.qdrant_process.terminate()
+                    try:
+                        self.qdrant_process.wait(timeout=15)
+                    except subprocess.TimeoutExpired:
+                        self.qdrant_process.kill()
+                        print("Qdrant process had to be force-killed")
+                self.qdrant_process = None
+                print("Qdrant service stopped")
+        
+            # 3. Close Qdrant client connection
+            if hasattr(self, 'qdrant_client') and self.qdrant_client:
+                try:
+                    print("Closing Qdrant client connection...")
+                    # Qdrant client doesn't have explicit close method, but we can delete it
+                    del self.qdrant_client
+                    self.qdrant_client = None
+                    print("Qdrant connection closed")
+                except Exception as e:
+                    print(f"Error closing Qdrant connection: {e}")
+            print("Clear operation completed!")
             
-            return True
+        except Exception as e:
+            print(f"❌ Error during clear operation: {e}")
+            traceback.print_exc()
+            return False
+        
+        return True
         
         ######################################################################
     def _init_chain(self):
@@ -418,9 +422,58 @@ class NewSGPT:
             | self.model_llm  # stream=True уже установлено в инициализации
             | StrOutputParser()
         )
-    #################################
-
-    
+    def create_or_load_collection(self, md_dir=None):
+        """
+        Create collection from Markdown files OR load existing collection if already exists
+        :param md_dir: Directory containing .md files (required only if creating new collection)
+        """
+        # Check if collection already exists
+        collections = self.qdrant_client.get_collections().collections
+        collection_names = [col.name for col in collections]
+        
+        if self.collection_name in collection_names:
+            print(f"Collection '{self.collection_name}' already exists. Loading existing data...")
+            # Load existing collection without recreating
+            self.vector_store = QdrantVectorStore(
+                client=self.qdrant_client,
+                collection_name=self.collection_name,
+                embedding=self.embeddings,
+            )
+            self._init_chain()
+            return self.vector_store
+        else:
+            # Only create new collection if md_dir is provided
+            if not md_dir:
+                raise ValueError(f"Collection '{self.collection_name}' doesn't exist and no md_dir provided for creation")
+            
+            print(f"Creating new collection '{self.collection_name}'...")
+            self.documents.clear()
+            
+            # Process markdown files as before
+            for filename in os.listdir(md_dir):
+                if not filename.endswith('.md'):
+                    continue
+                file_path = os.path.join(md_dir, filename)
+                try:
+                    file_documents = self._extract_chunks_from_md(file_path)
+                    self.documents.extend(file_documents)
+                    print(f"  Extracted {len(file_documents)} chunks from {filename}")
+                except Exception as e:
+                    print(f"Error processing {filename}: {str(e)}")
+                    continue
+            
+            if not self.documents:
+                raise ValueError("No valid chunks found in Markdown files")
+            
+            # Create collection 
+            self.vector_store = QdrantVectorStore.from_documents(
+                documents=self.documents,
+                embedding=self.embeddings,
+                collection_name=self.collection_name,
+                url=f"http://{self.qdrant_host}:{self.qdrant_port}",
+            )
+            self._init_chain()
+            return self.vector_store
     def create_collection_from_mds(self, md_dir):
         """
         Create Qdrant collection from Markdown files containing chunk-delimited content
@@ -456,6 +509,16 @@ class NewSGPT:
         )
         self._init_chain()
         return self.vector_store
+    def _serialize_document(self, doc):
+        """Convert LangChain Document to JSON-serializable dictionary"""
+        return {
+            "page_content": doc.page_content,
+            "metadata": {
+                key: str(value) if isinstance(value, (set, tuple)) else value
+                for key, value in doc.metadata.items()
+            }
+        }
+    
     async def ask_with_context(self, query: str):
         """
         Единая точка входа: СНАЧАЛА возвращает контекст, ПОТОМ стримит ответ
@@ -465,8 +528,8 @@ class NewSGPT:
         2. Затем стримит токены ответа по одному
         3. В конце выдает полный результат с контекстом и ответом
         """
-        # Шаг 1: Сначала получаем КОНТЕКСТНЫЕ ДОКУМЕНТЫ (ОБЯЗАТЕЛЬНО await!)
-        context_docs = await self.retriever.ainvoke(query)  #  КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: await здесь
+        # Шаг 1: Сначала получаем КОНТЕКСТНЫЕ ДОКУМЕНТЫ     
+        context_docs = await self.retriever.ainvoke(query)  
         
         # Inject rank into the content string
         for i, doc in enumerate(context_docs):
@@ -474,10 +537,12 @@ class NewSGPT:
             # doc.page_content = f"[Номер чанка по релевантности: {rank}]\n{doc.page_content}"
             doc.metadata['relevance_rank'] = i + 1
 
+        serializable_context = [self._serialize_document(doc) for doc in context_docs]
+
         # Шаг 2: СРАЗУ ВЫДАЕМ КОНТЕКСТ через yield
         yield {
             "type": "context",
-            "content": context_docs,  # Теперь это реальные Document объекты
+            "content": serializable_context,  # Теперь это реальные Document объекты
             "complete": False
         }
         
@@ -492,6 +557,9 @@ class NewSGPT:
         full_answer = ""
         async for chunk in self.model_llm.astream(messages):
             token = chunk.content if hasattr(chunk, 'content') else str(chunk)
+            # Говорят что когда модель иницилизирует streaming то она дает пустые токены
+            if not token or token.strip() == "":
+                continue
             full_answer += token
             yield {
                 "type": "token", 
@@ -503,10 +571,9 @@ class NewSGPT:
         yield {
             "type": "complete",
             "content": full_answer,
-            "context": context_docs,  # Оригинальные документы
+            "context": serializable_context,  # Оригинальные документы
             "complete": True
-        }
-    
+        }   
     def transcribe_audio(self, file_path):
         """
         Convert audio to WAV format and send to whisper.cpp server
@@ -542,7 +609,7 @@ class NewSGPT:
 
 async def main():
     gpt = NewSGPT()
-    gpt.create_collection_from_mds("backend/final_md")
+    gpt.create_or_load_collection("backend/final_md")
     while True:
         query = input("\nAsk a question (or 'quit' to exit): ").strip()
         if not query or query.lower() == "quit":
@@ -564,7 +631,7 @@ async def main():
                 print("\n" + "-"*80)
                 print(f"📚 Retrieved {len(context_docs)} context chunks:")  # ← Теперь len() работает!
                 for i, doc in enumerate(context_docs, 1):
-                    preview = doc.page_content
+                    preview = doc["page_content"]  # FIXED HERE
                     print(f"\n📄 Chunk {i}/{len(context_docs)}")
                     print(f"📝 Content: {preview}")
                 print("\n" + "-"*80)
