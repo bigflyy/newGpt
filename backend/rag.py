@@ -43,6 +43,8 @@ COLLECTION_NAME = "my_docs"
 # - metadata about the headers in each chunk, so it includes sources
 # - whisper end point 
 # - tool call rag 
+# - number chunks based on most similiar 
+# - raw chunk
 
 # INFO
 # conda activate suchgpt 
@@ -135,7 +137,7 @@ class NewSGPT:
                 Answer the question using ONLY the provided context.
                 If relevant informating is not provided - say so.
                 Answer without paraphrasing but in a readable format.
-                List the sources of all chunks YOU USED in your answer.
+                List the sources (Номер чанка по релевантности, Документ, Лекция, Глава, Подглава) of all chunks YOU USED in your answer.
                 Answer in Russian only. 
 
                 Context:
@@ -246,7 +248,6 @@ class NewSGPT:
             # Build Russian source block
             source_block = (
                 "Источник\n"
-                f"Номер чанка: {chunk_id}\n"
                 f"Документ: {filename}\n"
                 f"Лекция: {lecture_str}\n"
                 f"Глава: {chapter_str}\n"
@@ -262,6 +263,7 @@ class NewSGPT:
                 'header1_list': lectures,  # List of all H1s in chunk
                 'header2_list': chapters,  # List of all H2s in chunk
                 'header3_list': subchapters,  # List of all H3s in chunk
+                'raw_chunktext': chunk_text # сырой текст чанка
             }
             documents.append(Document(
                 page_content=full_text,
@@ -450,6 +452,12 @@ class NewSGPT:
         # Шаг 1: Сначала получаем КОНТЕКСТНЫЕ ДОКУМЕНТЫ (ОБЯЗАТЕЛЬНО await!)
         context_docs = await self.retriever.ainvoke(query)  #  КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: await здесь
         
+        # Inject rank into the content string
+        for i, doc in enumerate(context_docs):
+            rank = i + 1  # 1-based ranking
+            doc.page_content = f"[Номер чанка по релевантности: {rank}]\n{doc.page_content}"
+            doc.metadata['relevance_rank'] = i + 1
+
         # Шаг 2: СРАЗУ ВЫДАЕМ КОНТЕКСТ через yield
         yield {
             "type": "context",
@@ -518,7 +526,7 @@ class NewSGPT:
 
 async def main():
     gpt = NewSGPT()
-    gpt.create_collection_from_mds("final_md")
+    gpt.create_collection_from_mds("backend/final_md")
     while True:
         query = input("\nAsk a question (or 'quit' to exit): ").strip()
         if not query or query.lower() == "quit":
