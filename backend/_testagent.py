@@ -11,7 +11,7 @@ def _get_weather(location: str) -> str:
 get_weather_tool = tool(_get_weather)
 
 # Initialize model
-model = ChatOllama(model="qwen3:8b", temperature=0)
+model = ChatOllama(model="gpt-oss:20b", temperature=0)
 model_with_tools = model.bind_tools([get_weather_tool])
 
 # Step 1: First call - model decides to call tool

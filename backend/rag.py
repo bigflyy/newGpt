@@ -38,11 +38,27 @@ QDRANT_PORT = 6333
 COLLECTION_NAME = "my_docs"
 
 
+# api 
+# whisper (via mic at least ) and with text extension   
+# tools calling 
+
+
+# Н
+# md 
+
+# Д
+# банк достовернных вопросов ответов 
+# что-то из пособия  
+
 # TODO:
 # - time logger for embedding and retriever 
-# - metadata about the headers in each chunk, so it includes sources
 # - whisper end point 
 # - tool call rag 
+# - multimodal model (images)
+# - chunker with llm 
+# - graph 
+
+# - metadata about the headers in each chunk, so it includes sources
 # - number chunks based on most similiar 
 # - raw chunk
 
@@ -104,10 +120,10 @@ class NewSGPT:
         self.__run_services()
 
         self.embeddings = OllamaEmbeddings(
-            #model="qwen3-embedding:8b", num_ctx=4096
-            model="qwen3-embedding:0.6b", num_ctx=2048,
+            model="qwen3-embedding:8b", num_ctx=4096,
+            # model="qwen3-embedding:0.6b", num_ctx=2048,
             base_url=self.ollama_base,
-            keep_alive=90
+            keep_alive=-1,
         )
         self.qdrant_client = QdrantClient(
             host=self.qdrant_host,
@@ -122,12 +138,12 @@ class NewSGPT:
         self.vector_store = None
         # LLM
         self.model_llm = ChatOllama(
-            model="deepseek-r1:8b",  
-            # model="gpt-oss:20b", num_ctx=65536, reasoning='low',
+            # model="deepseek-r1:8b",  
+            model="gpt-oss:20b", num_ctx=65536, reasoning='low',
             base_url=self.ollama_base,
             stream=True,
             callbacks=[TimeLogger()],
-            keep_alive=90,
+            keep_alive=-1,
             # токенов
             
         )
@@ -137,7 +153,7 @@ class NewSGPT:
                 Answer the question using ONLY the provided context.
                 If relevant informating is not provided - say so.
                 Answer without paraphrasing but in a readable format.
-                List the sources (Номер чанка по релевантности, Документ, Лекция, Глава, Подглава) of all chunks YOU USED in your answer.
+                List the sources of all chunks YOU USED in your answer. Example: "Источники: Документ(ы): .... \n Лекция(и): .... \n Глава(ы: .... \n Подглава(ы): .... \n"
                 Answer in Russian only. 
 
                 Context:
@@ -455,7 +471,7 @@ class NewSGPT:
         # Inject rank into the content string
         for i, doc in enumerate(context_docs):
             rank = i + 1  # 1-based ranking
-            doc.page_content = f"[Номер чанка по релевантности: {rank}]\n{doc.page_content}"
+            # doc.page_content = f"[Номер чанка по релевантности: {rank}]\n{doc.page_content}"
             doc.metadata['relevance_rank'] = i + 1
 
         # Шаг 2: СРАЗУ ВЫДАЕМ КОНТЕКСТ через yield
